@@ -338,10 +338,34 @@ void *logging_thread(void *arg)
  */
 int child_fn(void *arg)
 {
-    (void)arg;
+    child_config_t *config = (child_config_t *)arg;
+
+    // Change root filesystem
+    if (chroot(config->rootfs) != 0) {
+        perror("chroot failed");
+        return 1;
+    }
+
+    // Go to root directory
+    if (chdir("/") != 0) {
+        perror("chdir failed");
+        return 1;
+    }
+
+    // Mount /proc
+    mkdir("/proc", 0555);
+    if (mount("proc", "/proc", "proc", 0, NULL) != 0) {
+        perror("mount failed");
+        return 1;
+    }
+
+    // Execute command
+    char *argv[] = {config->command, NULL};
+    execvp(argv[0], argv);
+
+    perror("exec failed");
     return 1;
 }
-
 int register_with_monitor(int monitor_fd,
                           const char *container_id,
                           pid_t host_pid,
@@ -469,27 +493,45 @@ static int cmd_start(int argc, char *argv[])
 
 static int cmd_run(int argc, char *argv[])
 {
-    control_request_t req;
-
     if (argc < 5) {
         fprintf(stderr,
-                "Usage: %s run <id> <container-rootfs> <command> [--soft-mib N] [--hard-mib N] [--nice N]\n",
+                "Usage: %s run <id> <container-rootfs> <command>\n",
                 argv[0]);
         return 1;
     }
 
-    memset(&req, 0, sizeof(req));
-    req.kind = CMD_RUN;
-    strncpy(req.container_id, argv[2], sizeof(req.container_id) - 1);
-    strncpy(req.rootfs, argv[3], sizeof(req.rootfs) - 1);
-    strncpy(req.command, argv[4], sizeof(req.command) - 1);
-    req.soft_limit_bytes = DEFAULT_SOFT_LIMIT;
-    req.hard_limit_bytes = DEFAULT_HARD_LIMIT;
+    char *id = argv[2];
+    char *rootfs = argv[3];
+    char *command = argv[4];
 
-    if (parse_optional_flags(&req, argc, argv, 5) != 0)
+    // Prepare child config
+    child_config_t config;
+    memset(&config, 0, sizeof(config));
+
+    strncpy(config.id, id, sizeof(config.id) - 1);
+    strncpy(config.rootfs, rootfs, sizeof(config.rootfs) - 1);
+    strncpy(config.command, command, sizeof(config.command) - 1);
+
+    // Allocate stack
+    static char stack[STACK_SIZE];
+
+    // Create container using clone
+    pid_t pid = clone(
+        child_fn,
+        stack + STACK_SIZE,
+        CLONE_NEWPID | CLONE_NEWUTS | CLONE_NEWNS | SIGCHLD,
+        &config
+    );
+
+    if (pid < 0) {
+        perror("clone failed");
         return 1;
+    }
 
-    return send_control_request(&req);
+    // Wait for container to finish
+    waitpid(pid, NULL, 0);
+
+    return 0;
 }
 
 static int cmd_ps(void)

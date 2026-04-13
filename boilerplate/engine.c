@@ -340,13 +340,11 @@ int child_fn(void *arg)
 {
     child_config_t *config = (child_config_t *)arg;
 
-    // Change root filesystem
     if (chroot(config->rootfs) != 0) {
         perror("chroot failed");
         return 1;
     }
 
-    // Go to root directory
     if (chdir("/") != 0) {
         perror("chdir failed");
         return 1;
@@ -359,8 +357,10 @@ int child_fn(void *arg)
         return 1;
     }
 
-    // Execute command
-   execl(config->command, config->command, (char *)NULL);
+    // VERY IMPORTANT: use /bin/sh explicitly
+    char *args[] = {"/bin/sh", NULL};
+
+    execv("/bin/sh", args);
 
     perror("exec failed");
     return 1;

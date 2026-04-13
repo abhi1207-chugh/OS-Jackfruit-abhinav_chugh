@@ -360,8 +360,7 @@ int child_fn(void *arg)
     }
 
     // Execute command
-    char *argv[] = {config->command, NULL};
-    execvp(argv[0], argv);
+   execl(config->command, config->command, (char *)NULL);
 
     perror("exec failed");
     return 1;
